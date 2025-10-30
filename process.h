@@ -15,7 +15,10 @@ class Resource{
     public:
         int rid; // Resource ID
         int state; // 0: Allocated, 1: Free
+        int inventory;
         vector<int> WL;
+
+        Resource(int r, int s) : rid(r), state(s), inventory(r+1){}
 
         bool is_alloc(){
             return state == 0;
@@ -39,6 +42,9 @@ class Resource{
             }
             if (!WL.empty()){
                 warning("Waitlist is not empty. Impossible to be free!");
+                return;
+            }if (inventory <= 0){
+                warning("Nothing in inventory. Impossible to be free!");
                 return;
             }
             state = 1;
@@ -72,7 +78,7 @@ class Resource{
 
         void print(){
             string msg = format("RID: {}, state: {}, inventory: {}", rid, state, -1);
-            cout << msg << "WL: ";
+            cout << msg << endl << "WL: ";
             for (auto r : WL){
                 cout << r << " ";
             }
@@ -86,6 +92,7 @@ class Process{
     int pid;
     int state; // 0: ready, 1: running, 2: blocked
     int parent;
+    int priority;
     // ChildList children; // LL of process it created (children processes)
     vector<int> children; // Vector of PIDs of children
 
@@ -102,7 +109,7 @@ class Process{
     // Default Constructor
     Process() : state(-1), parent(-1){ }
     // Constructor params
-    Process(int id, int s, int p): pid(id), state(s), parent(p){ }   
+    Process(int id, int s, int p, int pr): pid(id), state(s), parent(p), priority(pr){ }   
 
     void add_child(int child_pid){
         children.push_back(child_pid);
@@ -116,19 +123,15 @@ class Process{
     int num_children(){
         return children.size();
     }
-    void remove_child(Process* child){
+    void remove_child(int child_pid){
         /*
         Removes the child from the childlist
         Key notes: remove does the shifting. All elements to the right of the
         target are shifted towards the begining(left).
         Erase: Takes care of the garbage tail. And decrements size.
         */
-        if (!child){
-            warning("Trying to remove child from parent list when child is nullptr.");
-            return;
-        }
 
-        children.erase(remove(children.begin(), children.end(), child->pid), children.end());
+        children.erase(remove(children.begin(), children.end(), child_pid), children.end());
     }
     void add_resource(int rid){
         resources.push_back(rid);

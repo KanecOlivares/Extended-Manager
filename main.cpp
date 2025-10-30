@@ -5,6 +5,7 @@
 #include <format> // Require CPP +20
 #include <string>
 #include <fstream>
+#include <filesystem>
 #include <iostream>
 #include "process.h"
 using namespace std;
@@ -18,13 +19,14 @@ vector<Resource> RCB;
 
 // Ready and Waitl ist
 // They only store the pid of their respective processes
-vector<int> RL; 
+vector<vector<int>> RL; //pid
 vector<int> WL;
 
 // Declarations for compiler
+int highest_occupied_priority();
 Process* get_process(int pid);
-void delete_process(Process* target);
-void release(int release_rid, Process* given_p);
+void delete_process(int target_pid);
+void release(int release_rid, int given_pid);
 void scheduler();
 
 int next_pid = 1;
@@ -43,32 +45,42 @@ Process* get_running_process(){
         debug("Ready list is empty.");
         return nullptr;
     }
-    int run_pid = RL[0];
-    return get_process(run_pid);
+
+    // for (size_t i = RL.size(); i >= 0; --i){
+    //     if (RL[i].empty()){
+    //         continue;
+    //     }else{
+    //         return get_process(RL[i][0]);
+    //     }
+    // }
+
+    
+    return get_process(RL[highest_occupied_priority()][0]);
 }
 
 void after_exe(){
-    ofstream file("output.txt");
+    ofstream file("output.txt", ios::app);
     if (!file.is_open()) {
         cerr << "Error opening file!" << endl;
         return;
     }
+
     Process* running_p = get_running_process();
-    int run_pid = running_p -> pid;
-    file << run_pid << " "; 
-    file.close();
+    if (!running_p) {
+        cerr << "No running process found!" << endl;
+        return;
+    }
+
+    int run_pid = running_p->pid;
+    file << run_pid << " ";  // appends instead of overwriting
 }
 
 void print(string msg){
     cout << msg << endl;
 }
 
-bool is_proccess_0(Process* p){
-    if (!p){
-        debug("nullptr cannot be process 0");
-        return false;
-    }
-    return p -> pid == 0;
+bool is_proccess_0(int pid){
+    return pid == 0;
 }
 
 Process* get_process(int pid){
@@ -89,7 +101,9 @@ Process* get_process(int pid){
 
 
 
-void add_child_to(Process* parent, Process* child){
+void add_child_to(int parent_pid, int child_pid){
+    Process* parent = get_process(parent_pid);
+    Process* child = get_process(child_pid);
     /*
     Adding the process with child_pid to the list of childrent of process with parent_pid
     */
@@ -106,10 +120,15 @@ bool pcb_full(){
     return PCB.size() == 16;
 }
 
-void create(){
+void create(int priority){
     /*
     Running PID creates the child. Use next_pid and post increment for the next create()
     */
+
+    if (priority <= 0){
+        debug("Cannot access priority <= 0");
+        return;
+    }
 
     if (pcb_full()){
         debug("PCB is full. Cannot Create more Proccesses");
@@ -123,24 +142,26 @@ void create(){
         return;
     }
     int run_pid = runnning_p -> pid;
-    Process child = Process(next_pid++, 0, run_pid); // pid, state (0 = ready), parent_pid
+    Process child = Process(next_pid++, 0, run_pid, priority); // pid, state (0 = ready), parent_pid
     PCB.push_back(child);
 
     Process* parent = get_running_process();
     Process* child_ptr = get_process(child.pid);
 
-    add_child_to(parent, child_ptr);
-    RL.push_back(child_ptr -> pid);
+    add_child_to(parent -> pid, child_ptr -> pid);
+    RL[priority].push_back(child_ptr -> pid);
 
     string msg = format("Process {} created", child.pid);
     print(msg);
 
 }
 
-void delete_children(Process* parent){
+void delete_children(int parent_pid){
     /*
     For all children in the parent's child vector delete those aswell
     */
+
+    Process* parent = get_process(parent_pid);
 
     if (!parent){
         debug("Trying to delete children of nullptr");
@@ -148,19 +169,14 @@ void delete_children(Process* parent){
     }
 
     for (int child_pid : parent -> children){
-        Process* child = get_process(child_pid);
-        if (!child){
-            debug("Child is null ptr");
-            return;
-        }
-        delete_process(child);
+        delete_process(child_pid);
     }
     parent -> children.clear();
 
     
 }
 
-void remove_from_PCB(Process* target){
+void remove_from_PCB(int target_pid){
     /*
     Removes the target process* in PCB
     Had to do remove_if b/c there was a mismatch.
@@ -172,26 +188,29 @@ void remove_from_PCB(Process* target){
     Solution: Use remove_if and use the pids.
     */
 
+    Process* target = get_process(target_pid);
+
     if (!target){
         debug("Attempting to remove nullptr from PCB");
         return;
     }
-    if (is_proccess_0(target)){
+    if (is_proccess_0(target_pid)){
         debug("Attempting to remove Process 0 from PCB");
         return;
     }
-    int pid = target->pid;
     PCB.erase(remove_if(PCB.begin(), PCB.end(),
-                         [pid](const Process& p){ return p.pid == pid; }),
+                         [target_pid](const Process& p){ return p.pid == target_pid; }),
           PCB.end());
 
 }
 
-void remove_from_parent_list(Process* child){
+void remove_from_parent_list(int child_pid){
     /*
     Given a child Process* it will obtain the parent process* and
     remove the child from parent.childlist
     */
+
+    Process* child = get_process(child_pid);
 
     if (!child){
         debug("Attempting to remove from parent list. Child is nullptr ");
@@ -203,44 +222,41 @@ void remove_from_parent_list(Process* child){
         return;
     }
 
-    parent->remove_child(child);
+    parent->remove_child(child_pid);
 }
 
-void remove_from_lists(Process* target){
+void remove_from_lists(int target_pid){
     /*
     Removes the target from RL or WL. It is safe due to erase(remove()) does
     nothing if it does't exist in the waitlist
     */
-    
-    if (!target){
-        debug("Cannot remove nullptr from any list (WL or RL)");
-        return;
-    }
-    int target_pid = target -> pid;
-
-    RL.erase(remove(RL.begin(), RL.end(), target_pid), RL.end());
+    Process* target_ptr = get_process(target_pid);
+    int priority = target_ptr -> priority;
+    RL[priority].erase(remove(RL[priority].begin(), RL[priority].end(), target_pid), RL[priority].end());
     WL.erase(remove(WL.begin(), WL.end(), target_pid), WL.end());
 }
 
-void release_resources(Process* target){
+void release_resources(int target_pid){
     /*
     Release all the resources of target
     */
+    Process* target = get_process(target_pid);
     if (!target){
         debug("Cannot release resources of nullptr");
         return;
     }
     for (int rid : target -> resources){
-        release(rid, target);
+        release(rid, target_pid);
     }
 }
 
-void delete_process(Process* target){
+void delete_process(int target_pid){
     /*
     Delete Children first then delete target
     */
+   Process* target = get_process(target_pid);
 
-    if (is_proccess_0(target)){
+    if (is_proccess_0(target_pid)){
         print("Skipping Deletion of Process 0");
         return;
     }
@@ -251,37 +267,39 @@ void delete_process(Process* target){
     }
 
     if (! target -> children.empty()){
-        delete_children(target);
+        delete_children(target_pid);
     }
+
+    target = get_process(target_pid);
 
     if(target -> parent > 0){
-        remove_from_parent_list(target); // removes pid from children vector
+        remove_from_parent_list(target_pid); // removes pid from children vector
     }
 
-    remove_from_lists(target); // removes from RL or WL which ever they are in
-    release_resources(target);
-    remove_from_PCB(target);
-    int target_pid = target -> pid;
-    delete target;
+    remove_from_lists(target_pid); // removes from RL or WL which ever they are in
+    release_resources(target_pid);
+    remove_from_PCB(target_pid);
     string msg = format("Destroyed process with pid {}", target_pid);
     print(msg);
 }
 
-void destroy(int pid){
+void destroy(int target_pid){
     Process* running_p = get_running_process();
+    
     if (!running_p){
         debug("Nullptr cannot destroy any processes");
         return;
     }
-    if (pid == 0){
+    int run_pid = running_p -> pid;
+
+    if (is_proccess_0(target_pid)){
         debug("Process 0 cannot be destroyed during runtime");
         return;
     }
-    if (running_p -> has_child(pid) || pid == running_p -> pid){
-        Process* p = get_process(pid);
-        delete_process(p);
+    if (running_p -> has_child(target_pid) || target_pid == running_p -> pid){
+        delete_process(target_pid);
     }else{
-        string msg = format("Running process {} can not destroy {} because it is not owner.", running_p -> pid, pid);
+        string msg = format("Running process {} can not destroy {} because it is not owner.", run_pid, target_pid);
         debug(msg);
         return;
     }
@@ -296,11 +314,10 @@ Resource* get_resource(int target_rid){
     return &RCB[target_rid];
 }
 
-void move_process_to_other(vector<int>& from, vector<int>& to, Process* target){
+void move_process_to_other(vector<int>& from, vector<int>& to, int target_pid){
     /*
     Erase the PID from the from list and move to the to list. 
     */
-    int target_pid = target->pid;
     from.erase(remove(from.begin(), from.end(), target_pid), from.end());
     to.push_back(target_pid);
 }
@@ -310,6 +327,8 @@ void request(int request_rid){
     Running process requesting resource with rid = request_rid
     */
     Process* runnning_p = get_running_process();
+    int run_pid = runnning_p -> pid;
+    int priority = runnning_p -> priority;
     if (!runnning_p){
         debug("Nullptr can not request a resource.");
         return;
@@ -321,7 +340,7 @@ void request(int request_rid){
         return;
     }
 
-    if(is_proccess_0(runnning_p)){
+    if(is_proccess_0(run_pid)){
         debug("Process 0 can not request any resources.");
         return;
     }
@@ -338,18 +357,22 @@ void request(int request_rid){
         print(msg);
 
     }else{ // Reousrce is not free
+        runnning_p = get_process(run_pid);
         runnning_p -> block();
-        move_process_to_other(RL, WL, runnning_p); // Move from RL to WL the process being moved is running_p
+        move_process_to_other(RL[priority], WL, run_pid); // Move from RL to WL the process being moved is running_p
+        rr->WL.push_back(run_pid);
         string msg = format("Process with PID: {} is now bloacked", runnning_p -> pid);
         print(msg);
         scheduler();
     }
 }
 
-void release(int release_rid, Process* given_p){
+void release(int release_rid, int given_pid){
     /*
     Releases resource w/rid from given_p.
     */
+
+    Process* given_p = get_process(given_pid);
 
     if(!given_p){
         debug("Nullptr can not release resource.");
@@ -379,7 +402,8 @@ void release(int release_rid, Process* given_p){
 
         int next_ready_pid = rr -> pop_WL_front(); // returns and erases head
         Process* next_ready_process = get_process(next_ready_pid);
-        move_process_to_other(WL, RL, next_ready_process);
+        int priority = next_ready_process -> priority;
+        move_process_to_other(WL, RL[priority], next_ready_pid);
         next_ready_process -> ready();
         next_ready_process -> add_resource(release_rid);
 
@@ -389,18 +413,32 @@ void release(int release_rid, Process* given_p){
     
 }
 
+int highest_occupied_priority(){
+
+    for (int i = RL.size(); i >= 0; --i){
+        if (RL[i].empty()){
+            continue;
+        }else{
+            return i;
+        }
+    }
+
+    return -1;
+}
+
 void timeout(){
     /*
     Mimcks time sharing
 
     */
-    if (RL.size() == 1){
+   int high_p = highest_occupied_priority();
+    if (RL[high_p].size() == 1){
         print("Only 1 process in ready list. Just skip");
         return;
     }
-
+    
     Process* running_p = get_running_process();
-    rotate(RL.begin(), RL.begin() + 1, RL.end());
+    rotate(RL[high_p].begin(), RL[high_p].begin() + 1, RL[high_p].end());
     running_p -> ready(); // Now it is the old running process is ready()
     Process* new_running_p = get_running_process();
     new_running_p -> running(); // New running_p is now running()
@@ -431,15 +469,39 @@ void pcb_clear_but_0(){
     }
 }
 
-void init(){
+void rcb_default(){
+    for (Resource& r : RCB){
+        r.force_free();
+    }
+}
+
+void rl_clear_but_0(){
+    if (RL.size() > 1) {
+        RL.erase(RL.begin() + 1, RL.end());
+    }
+    // RL.resize(3);
+}
+
+void make_resources(int num_resources){
+    for (int i = 0; i < num_resources; ++i){
+        Resource r = Resource(i, 1); // RID starts at 0, Size starts a 1
+        RCB.push_back(r);
+    }
+}
+
+void init(int levels, int num_resources){
     pcb_clear_but_0();
 
-    RL.clear();
+    rl_clear_but_0();
+    RL.resize(levels);
+
     PCB[0].running();
-    RL.push_back(PCB[0].pid);
+    
 
     WL.clear();
-    force_free_all(); // all resources
+    RCB.clear();
+    make_resources(num_resources);
+    // force_free_all(); // all resources
 
 }
 
@@ -484,13 +546,36 @@ void see_values(){
     }
     cout << endl;
 
+    // Ready List
+    cout << GREEN << "RL: " << NORMAL;
+    for (size_t i = 0; i < RL.size(); ++i){
+        cout << "\t" << "Priority " << i << ": ";
+        for(auto r : RL[i]){
+            cout << r << " ";
+        }
+    }
+    cout << endl;
+    
+    // for (int p : RL){
+    //     cout << p << " ";
+    // }
+    // cout << endl;
+
+    // Wait List
+    cout << GREEN << "WL: " << NORMAL;
+    for (int p : WL){
+        cout << p << " ";
+    }
+    cout << endl;
+
 }
 
 bool take_action(vector<string>& tokens){
     string command = tokens[0];
     if (command == "cr"){
         // print("Made it to create()");
-        create();
+        int priority = stoi(tokens[1]);
+        create(priority);
         return true;
     }else if (command == "de"){
         int pid = stoi(tokens[1]);
@@ -503,15 +588,18 @@ bool take_action(vector<string>& tokens){
     }else if(command == "rl"){
         int rid = stoi(tokens[1]);
         Process* p = get_running_process();
-        release(rid, p);
+        int run_pid = p -> pid;
+        release(rid, run_pid);
         return true;
     }else if(command == "to"){
         timeout();
         return true;
     }else if(command == "in"){
-        init();
+        int levels = stoi(tokens[1]);
+        int num_r = stoi(tokens[2]);
+        init(levels, num_r);
         return true;
-    }else if(command == "dbg"){
+    }else if(command == "see"){
         see_values();
         return true;
     }
@@ -520,41 +608,26 @@ bool take_action(vector<string>& tokens){
 
 }
 
-// int main(){
-//     string input;
-//     vector<string> tokens;
-//     Process p0 = Process(0, 0, -1); // PID; 0, state = 0 (ready), no parent 
-//     PCB.push_back(p0);
-//     init();
-//     while(true){
-//         input = prompt();
-
-//         if (input == "q"){
-//             break;
-//         }
-        
-//         tokens = get_tokens(input);
-//         if (take_action(tokens)){
-//             tokens.clear();
-//             after_exe();
-//         }else{
-//             input = prompt();
-//             tokens = get_tokens(input);
-//             while (tokens[0] != "in" || tokens[0] != "id"){
-//                 input = prompt();
-//                 tokens = get_tokens(input);
-//             }
-//         }
-//     }
-// }
+void clear_file(const string& filename) {
+    if (filesystem::exists(filename)) {
+        ofstream file(filename, std::ios::trunc);
+    }
+}
 
 int main() {
     
     vector<std::string> tokens;
 
-    Process p0 = Process(0, 0, -1); // PID 0, ready, no parent
+    Process p0 = Process(0, 0, -1, 0); // PID 0, ready, no parent
     PCB.push_back(p0);
-    init();
+    for (int i = 0; i < 3; ++i){
+        Resource r = Resource(i, 1);
+        RCB.push_back(r);
+    }
+
+    clear_file("output.txt");
+
+    init(3, 4);
 
     for (;;) {
         string input = prompt();
@@ -579,8 +652,6 @@ int main() {
             if (!tokens.empty() && (tokens[0] == "in" || tokens[0] == "id")) {
                 break; // got a valid starter token
             }
-            // optionally print a hint:
-            // std::cout << "Enter a command starting with 'in' or 'id'\n";
         }
 
         // Now handle that command:
@@ -592,3 +663,7 @@ int main() {
 }
 
 
+// if (RL.size() > 1) {
+//     RL.erase(RL.begin() + 1, RL.end());
+// }
+// RL.resize(size);

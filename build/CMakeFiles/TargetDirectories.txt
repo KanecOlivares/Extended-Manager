@@ -1,0 +1,3 @@
+/Users/kanecolivares/UCI/Fall_2025/CS143B/project1_Kanec_Olivares_v3/build/CMakeFiles/main.dir
+/Users/kanecolivares/UCI/Fall_2025/CS143B/project1_Kanec_Olivares_v3/build/CMakeFiles/edit_cache.dir
+/Users/kanecolivares/UCI/Fall_2025/CS143B/project1_Kanec_Olivares_v3/build/CMakeFiles/rebuild_cache.dir

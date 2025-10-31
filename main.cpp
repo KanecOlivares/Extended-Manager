@@ -33,6 +33,7 @@ void release(int release_rid, int given_pid, int units);
 void scheduler();
 
 int next_pid = 1;
+int curr_running_pid = 0;
 
 void debug(string msg){
     cout << RED << "ERROR: ";
@@ -50,14 +51,7 @@ Process* get_running_process(){
         return nullptr;
     }
 
-    // for (size_t i = RL.size(); i >= 0; --i){
-    //     if (RL[i].empty()){
-    //         continue;
-    //     }else{
-    //         return get_process(RL[i][0]);
-    //     }
-    // }
-    return get_process(RL[highest_occupied_priority()][0]);
+    return get_process(curr_running_pid);
 }
 
 void after_exe(){
@@ -484,43 +478,51 @@ void timeout(){
 }
 
 void scheduler(){
-    Process* running_p = get_running_process();
+    
+    curr_running_pid = RL[highest_occupied_priority()][0];
+    cout << "Process PID: " << curr_running_pid << " running." << endl;
 
-    if (!running_p){
-        debug("Scheduler found nullptr as running.");
-        return;
-    }
-
-    cout << "Process PID: " << running_p -> pid << " running." << endl;
 }
 
 
-void force_free_all(){
-    for (auto &r : RCB){
-        r.force_free();
-    }
-}
+// void force_free_all(){
+//     for (auto &r : RCB){
+//         r.force_free();
+//     }
+// }
 
 void pcb_clear_but_0(){
+    /*
+    Clears the entire PCB except for process0
+    */
     if (PCB.size() > 1) {
         PCB.erase(PCB.begin() + 1, PCB.end());
     }
 }
 
-void rcb_default(){
-    for (Resource& r : RCB){
-        r.force_free();
-    }
-}
+// void rcb_default(){
+//     for (Resource& r : RCB){
+//         r.force_free();
+//     }
+// }
 
 void rl_clear_but_0(){
+    /*
+    Clears the ready list of all prioity levels but priority of 0
+    */
     if (RL.size() > 1) {
         RL.erase(RL.begin() + 1, RL.end());
     }
-    // RL.resize(3);
 }
 
 void make_resources(int num_resources){
+    /*
+    Helper function for init. Used to create number of resources with default inventory
+    First resource 0 takes special case 
+        RID 0: inventory 1
+    After all resources take properties of:
+        RID r: inventory r
+    */
     Resource r0 = Resource(0, 1);
     RCB.push_back(r0);
     for (int i = 1; i < num_resources; ++i){
@@ -530,6 +532,9 @@ void make_resources(int num_resources){
 }
 
 void init(int levels, int num_resources){
+    /*
+    Returns the state of the program to the given levels and number of resources
+    */
     pcb_clear_but_0();
     rl_clear_but_0();
 
@@ -539,7 +544,6 @@ void init(int levels, int num_resources){
     WL.clear();
     RCB.clear();
     make_resources(num_resources);
-    // force_free_all(); // all resources
 
 }
 
@@ -551,6 +555,9 @@ string prompt() {
 }
 
 vector<string> get_tokens(const std::string& input){
+    /*
+    Gets all tokens for the command
+    */
     istringstream iss(input);
     vector<string> tokens;
     string word;
@@ -563,7 +570,7 @@ vector<string> get_tokens(const std::string& input){
 
 void see_values(){
     /*
-    Check states: next_pid, WL, RL, RCB, PCB, running_p
+    Visual Check of what is truly happening in my program.
     */
 
     // Running 
@@ -593,11 +600,6 @@ void see_values(){
         }
     }
     cout << endl;
-    
-    // for (int p : RL){
-    //     cout << p << " ";
-    // }
-    // cout << endl;
 
     // Wait List
     cout << GREEN << "WL: " << NORMAL;
@@ -609,6 +611,18 @@ void see_values(){
 }
 
 void ru(vector<string> tokens){
+    /*
+    Each token represents the inventory of the selected resource.
+    I.e
+
+    1 1 2 3
+    RID: 0 has inventory 1
+    RID: 1 has inventory 1
+    RID: 2 has inventory 2
+    RID: 3 has inventory 3
+
+    */
+
     RCB.clear();
     int curr_rid = 0;
     for (auto token : tokens){
@@ -620,12 +634,18 @@ void ru(vector<string> tokens){
 }
 
 void id(){
+    /*
+    Return the state of the program to the default state
+    */
     init(3,4);
     vector<string> tokens = {"1", "1", "2", "3"};
     ru(tokens);
 }
 
 bool take_action(vector<string>& tokens){
+    /*
+    Returns: Wether or not the command was executed
+    */
     string command = tokens[0];
     if (command == "cr"){
         // print("Made it to create()");
@@ -686,7 +706,6 @@ int main() {
     vector<std::string> tokens;
     clear_file("output.txt");
     
-
     for (;;) {
         string input = prompt();
         if (input == "q") break;
@@ -700,32 +719,23 @@ int main() {
         if(take_action(tokens)){
             tokens.clear();
             after_exe();
-            continue; // back to top
+            continue; // Back to top
         }
 
         if (detected_bug) {
-            for (;;) {
+            for (;;) { // Wait till in or id command
                 input = prompt();
                 tokens = get_tokens(input);
                 if (!tokens.empty() && (tokens[0] == "in" || tokens[0] == "id")) {
                     break; // got a valid starter token
                 }
             }
-    
+
             // Now handle that command:
             if (take_action(tokens)) {
                 tokens.clear();
                 after_exe();
             }
         }
-
-        // If action not taken, require a command starting with "in" or "id"
-        
     }
 }
-
-
-// if (RL.size() > 1) {
-//     RL.erase(RL.begin() + 1, RL.end());
-// }
-// RL.resize(size);

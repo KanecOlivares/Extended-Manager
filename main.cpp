@@ -10,8 +10,11 @@
 #include "process.h"
 using namespace std;
 
+bool detected_bug = false;
+
 string GREEN = "\033[32m";
-string NORMAL = "\033[0m";
+// string NORMAL = "\033[0m"; using normal from proccess.h
+// string RED = "\033[31m"; using red from process.h
 
 vector<Process> PCB;
 int max_pcb = 16;
@@ -26,14 +29,15 @@ vector<int> WL;
 int highest_occupied_priority();
 Process* get_process(int pid);
 void delete_process(int target_pid);
-void release(int release_rid, int given_pid);
+void release(int release_rid, int given_pid, int units);
 void scheduler();
 
 int next_pid = 1;
 
 void debug(string msg){
-    cout << "ERROR: ";
-    cout << msg << endl;
+    cout << RED << "ERROR: ";
+    cout << msg << NORMAL <<  endl;
+    detected_bug = true;
 }
 
 Process* get_running_process(){
@@ -53,8 +57,6 @@ Process* get_running_process(){
     //         return get_process(RL[i][0]);
     //     }
     // }
-
-    
     return get_process(RL[highest_occupied_priority()][0]);
 }
 
@@ -129,6 +131,11 @@ void create(int priority){
         debug("Cannot access priority <= 0");
         return;
     }
+    int size = RL.size();
+    if (priority > size){
+        debug("That prirotity level doesnt exist.");
+        return;
+    }
 
     if (pcb_full()){
         debug("PCB is full. Cannot Create more Proccesses");
@@ -142,6 +149,7 @@ void create(int priority){
         return;
     }
     int run_pid = runnning_p -> pid;
+    int run_priority = runnning_p -> priority;
     Process child = Process(next_pid++, 0, run_pid, priority); // pid, state (0 = ready), parent_pid
     PCB.push_back(child);
 
@@ -154,6 +162,9 @@ void create(int priority){
     string msg = format("Process {} created", child.pid);
     print(msg);
 
+    if (priority > run_priority){
+        scheduler();
+    }
 }
 
 void delete_children(int parent_pid){
@@ -245,8 +256,8 @@ void release_resources(int target_pid){
         debug("Cannot release resources of nullptr");
         return;
     }
-    for (int rid : target -> resources){
-        release(rid, target_pid);
+    for (const auto &[rid, units] : target -> resources){
+        release(rid, target_pid, units);
     }
 }
 
@@ -322,7 +333,7 @@ void move_process_to_other(vector<int>& from, vector<int>& to, int target_pid){
     to.push_back(target_pid);
 }
 
-void request(int request_rid){
+void request(int request_rid, int units){
     /*
     Running process requesting resource with rid = request_rid
     */
@@ -345,31 +356,62 @@ void request(int request_rid){
         return;
     }
 
-    if (runnning_p -> has_resource(request_rid)){
-        string msg = format("Running process: {} already hold resource: {}.", runnning_p -> pid, request_rid);
-        debug(msg);
-    }
-
-    if (rr->is_free()){
-        rr->alloc();
-        runnning_p->add_resource(request_rid);
+    if (rr -> is_request_legal(units)){
+        rr -> alloc(units); // no need for PID just allocating
+        runnning_p->add_resource(request_rid, units); 
         string msg = format("Resource with rid: {} has been allocated to process with pid {}", request_rid, runnning_p ->pid);
         print(msg);
 
-    }else{ // Reousrce is not free
+    }else{ // Reousrce is not free or too many resources requested
         runnning_p = get_process(run_pid);
         runnning_p -> block();
         move_process_to_other(RL[priority], WL, run_pid); // Move from RL to WL the process being moved is running_p
-        rr->WL.push_back(run_pid);
+        rr->add_wl_process(run_pid, units);
         string msg = format("Process with PID: {} is now bloacked", runnning_p -> pid);
         print(msg);
         scheduler();
     }
 }
 
-void release(int release_rid, int given_pid){
+int get_highest_priority(vector<int>& v){
+    int max_priority = -1;
+    int max_pid = -1;
+    for (int pid : v){
+        Process* p = get_process(pid);
+        int p_priority = p -> priority;
+        if (p_priority > max_priority){
+            max_pid = p -> pid;
+        }
+    }
+    return max_pid;
+}
+
+void rl_free_pids(vector<int>& free_pids){
+    for (int pid : free_pids){
+        Process* p = get_process(pid);
+        int priority = p -> priority;
+        move_process_to_other(WL, RL[priority], pid);
+    }
+}
+
+void rl_scheduler(vector<int>& free_pids){
+
+    int next_ready_pid = get_highest_priority(free_pids); // get the highest priority in free_pids
+    Process* runnning_p = get_running_process();
+    int run_priority = runnning_p -> priority;
+    Process* next_ready_process = get_process(next_ready_pid);
+    int next_priority = next_ready_process -> priority;
+
+    if (next_priority > run_priority){
+        scheduler();
+    }
+
+}
+
+void release(int release_rid, int given_pid, int units){
     /*
     Releases resource w/rid from given_p.
+    units = untis to be released.
     */
 
     Process* given_p = get_process(given_pid);
@@ -387,35 +429,30 @@ void release(int release_rid, int given_pid){
         return;
     }
 
-    if (! given_p-> has_resource(release_rid)){ // given program is not owner of resource
-        string msg = format("Given Process PID: {} does not own resouce {}", given_p -> pid, release_rid);
+    if (! given_p-> has_resource(release_rid, units)){ // given program is not owner of resource
+        string msg = format("Given Process PID: {} does not own resouce {} or amount of {}", given_p -> pid, release_rid, units);
         debug(msg);
         return;
     }
 
-    given_p->remove_resource(release_rid);
 
-    if (rr -> WL.empty()){
-        rr -> free();
-        return;
-    }else{
+    rr -> release(units);
+    given_p->remove_resource(release_rid, units);
 
-        int next_ready_pid = rr -> pop_WL_front(); // returns and erases head
-        Process* next_ready_process = get_process(next_ready_pid);
-        int priority = next_ready_process -> priority;
-        move_process_to_other(WL, RL[priority], next_ready_pid);
-        next_ready_process -> ready();
-        next_ready_process -> add_resource(release_rid);
-
+    if (! rr -> WL.empty()){
+        vector<int> free_pids = rr -> now_free();
+        rl_free_pids(free_pids); // frees pids of free_pids
+        rl_scheduler(free_pids); // Calls scheduler if needed
     }
-    string msg = format("Resource RID: {}, has been released", release_rid);
+
+    string msg = format("Resource RID: {}, units: {}, has been released", release_rid, units);
     print(msg);
     
 }
 
 int highest_occupied_priority(){
 
-    for (int i = RL.size(); i >= 0; --i){
+    for (int i = RL.size() - 1; i >= 0; --i){
         if (RL[i].empty()){
             continue;
         }else{
@@ -442,6 +479,7 @@ void timeout(){
     running_p -> ready(); // Now it is the old running process is ready()
     Process* new_running_p = get_running_process();
     new_running_p -> running(); // New running_p is now running()
+    scheduler();
 
 }
 
@@ -483,21 +521,21 @@ void rl_clear_but_0(){
 }
 
 void make_resources(int num_resources){
-    for (int i = 0; i < num_resources; ++i){
-        Resource r = Resource(i, 1); // RID starts at 0, Size starts a 1
+    Resource r0 = Resource(0, 1);
+    RCB.push_back(r0);
+    for (int i = 1; i < num_resources; ++i){
+        Resource r = Resource(i, i); // RID starts at 0, Size starts a 1
         RCB.push_back(r);
     }
 }
 
 void init(int levels, int num_resources){
     pcb_clear_but_0();
-
     rl_clear_but_0();
-    RL.resize(levels);
 
+    RL.resize(levels);
     PCB[0].running();
     
-
     WL.clear();
     RCB.clear();
     make_resources(num_resources);
@@ -570,12 +608,30 @@ void see_values(){
 
 }
 
+void ru(vector<string> tokens){
+    RCB.clear();
+    int curr_rid = 0;
+    for (auto token : tokens){
+        int units = stoi(token);
+        Resource r = Resource(curr_rid++, units); // RID starts at 0, Size starts a 1
+        RCB.push_back(r);
+
+    }
+}
+
+void id(){
+    init(3,4);
+    vector<string> tokens = {"1", "1", "2", "3"};
+    ru(tokens);
+}
+
 bool take_action(vector<string>& tokens){
     string command = tokens[0];
     if (command == "cr"){
         // print("Made it to create()");
         int priority = stoi(tokens[1]);
         create(priority);
+        scheduler();
         return true;
     }else if (command == "de"){
         int pid = stoi(tokens[1]);
@@ -583,13 +639,15 @@ bool take_action(vector<string>& tokens){
         return true;
     }else if(command == "rq"){
         int rid = stoi(tokens[1]);
-        request(rid);
+        int units = stoi(tokens[2]);
+        request(rid, units);
         return true;
     }else if(command == "rl"){
         int rid = stoi(tokens[1]);
+        int units = stoi(tokens[2]);
         Process* p = get_running_process();
         int run_pid = p -> pid;
-        release(rid, run_pid);
+        release(rid, run_pid, units);
         return true;
     }else if(command == "to"){
         timeout();
@@ -601,6 +659,9 @@ bool take_action(vector<string>& tokens){
         return true;
     }else if(command == "see"){
         see_values();
+        return true;
+    }else if(command == "id"){
+        id();
         return true;
     }
     print("Not a valid command");
@@ -615,19 +676,16 @@ void clear_file(const string& filename) {
 }
 
 int main() {
-    
-    vector<std::string> tokens;
 
     Process p0 = Process(0, 0, -1, 0); // PID 0, ready, no parent
     PCB.push_back(p0);
-    for (int i = 0; i < 3; ++i){
-        Resource r = Resource(i, 1);
-        RCB.push_back(r);
-    }
+    RL.resize(1);
+    RL[0].push_back(0);
+    id();
 
+    vector<std::string> tokens;
     clear_file("output.txt");
-
-    init(3, 4);
+    
 
     for (;;) {
         string input = prompt();
@@ -639,26 +697,30 @@ int main() {
             continue;
         };
 
-        if (take_action(tokens)) {
+        if(take_action(tokens)){
             tokens.clear();
             after_exe();
-            continue;
+            continue; // back to top
         }
 
-        // If action not taken, require a command starting with "in" or "id"
-        for (;;) {
-            input = prompt();
-            tokens = get_tokens(input);
-            if (!tokens.empty() && (tokens[0] == "in" || tokens[0] == "id")) {
-                break; // got a valid starter token
+        if (detected_bug) {
+            for (;;) {
+                input = prompt();
+                tokens = get_tokens(input);
+                if (!tokens.empty() && (tokens[0] == "in" || tokens[0] == "id")) {
+                    break; // got a valid starter token
+                }
+            }
+    
+            // Now handle that command:
+            if (take_action(tokens)) {
+                tokens.clear();
+                after_exe();
             }
         }
 
-        // Now handle that command:
-        if (take_action(tokens)) {
-            tokens.clear();
-            after_exe();
-        }
+        // If action not taken, require a command starting with "in" or "id"
+        
     }
 }
 

@@ -5,82 +5,108 @@
 #include <algorithm>
 #include <iostream>
 #include <string.h>
+#include <map>
 using namespace std;
 
+string NORMAL = "\033[0m";
+string RED = "\033[31m";
+
 void warning(string msg){
-    cout << msg << endl;
+    cout << RED << msg << NORMAL  << " FROM PROCESS.H" << endl;
 }
 
 class Resource{
     public:
         int rid; // Resource ID
-        int state; // 0: Allocated, 1: Free
-        int inventory;
-        vector<int> WL;
+        int state; // Num of available resources
+        int inventory; // inital number of resources
+        map<int, int> WL; // PID, units requested
 
-        Resource(int r, int s) : rid(r), state(s), inventory(r+1){}
+        Resource(int r, int inital_units) : rid(r), state(inital_units), inventory(inital_units){}
 
         bool is_alloc(){
+            if (state < 0){
+                warning("State got to less than zero.");
+            }
             return state == 0;
         }
 
         bool is_free(){
-            return state == 1;
+            return state > 0;
         }
 
-        void alloc(){
-            if (state == 0){
-                warning("It is already allocated");
-                return;
-            }
-            state = 0;
+        bool is_request_legal(int units){
+            return state - units >= 0;
         }
 
-        void free(){
-            if (state == 1){
-                warning("It is already free");
-            }
-            if (!WL.empty()){
-                warning("Waitlist is not empty. Impossible to be free!");
-                return;
-            }if (inventory <= 0){
-                warning("Nothing in inventory. Impossible to be free!");
-                return;
-            }
-            state = 1;
-        }
+        void alloc(int units){
+            /*
+            Positive units means they are able to get the resource and negative means they are waiting for resource
+            When equalling to zero I have to be able to make them free
+            */
 
-        int get_WL_head(){
-            return WL[0];
-        }
-
-        void release_head(){
-
-            if (WL.empty()){
-                warning("Can not relase process from WL becasue it is empty");
+            if (is_request_legal(units)){ // if units > available units
+                state -= units;
+            }else{
+                warning("Trying to alloc more than avaialble.");
                 return;
             }
 
-            WL.erase(WL.begin());
-
+            
         }
 
-        int pop_WL_front(){
-            int head = get_WL_head();
-            release_head();
-            return head;
+
+
+        void release(int units){
+            int new_avail_units = state + units;
+            if (new_avail_units > inventory){
+                warning("Trying to release too many units. Excceds inventory");
+                return;
+            }
+            state = new_avail_units;
+        }
+
+        vector<int> now_free(){
+            /*
+            Returns vector of PIDS that can now be free
+            */
+            vector<int> del_wl_pid;
+
+            for (auto& [key, value] : WL){
+                if (value <= state){
+                    del_wl_pid.push_back(key);
+                }
+            }
+
+            // for (int pid : del_wl_pid){
+            //     WL.erase(pid);
+            // }
+
+            return del_wl_pid;
+        }
+
+        void add_wl_process(int pid, int units){
+            /*
+            PID is now a blocked process which is requesting {units} amount of resource
+            */
+            if (WL.contains(pid)){
+                string msg = format("{} is already in WL. Cannot be requesting resources if it is blocked. Requesting: {} units", pid, units);
+                warning("Already in WL. Impossible due to blocked processes not being able to request resources");
+            }else{
+                WL[pid] = units;
+            }
         }
 
         void force_free(){
-            state = 1;
+            state = inventory;
             WL.clear();
         }
 
         void print(){
-            string msg = format("RID: {}, state: {}, inventory: {}", rid, state, -1);
+            string msg = format("RID: {}, state: {}, inventory: {}", rid, state, inventory);
             cout << msg << endl << "WL: ";
-            for (auto r : WL){
-                cout << r << " ";
+            for (const auto &[key, value] : WL){
+                cout << "\t" << "PID: " << key << " Units: " << value << endl;
             }
             cout << endl;
         }
@@ -89,14 +115,17 @@ class Resource{
 
 class Process{
     public:
+
     int pid;
     int state; // 0: ready, 1: running, 2: blocked
     int parent;
     int priority;
+
+    
     // ChildList children; // LL of process it created (children processes)
     vector<int> children; // Vector of PIDs of children
 
-    vector<int> resources; // LL of resources it is holding
+    map<int, int> resources; // map RID, units
 
     // Destructor
     ~Process(){
@@ -133,8 +162,12 @@ class Process{
 
         children.erase(remove(children.begin(), children.end(), child_pid), children.end());
     }
-    void add_resource(int rid){
-        resources.push_back(rid);
+    void add_resource(int rid, int units){
+        if (resources.contains(rid)){
+            resources[rid] += units;
+        }else{
+            resources[rid] = units;
+        }
     }
 
     void ready(){
@@ -149,26 +182,63 @@ class Process{
         state = 2;
     }
 
-    bool has_resource(int rid){
-        auto it = find(resources.begin(), resources.end(), rid);
-        return it != resources.end();
+    bool has_resource(int rid, int units){
+        return resources.contains(rid) && units <= resources[rid];
     }
 
-    void remove_resource(int rid){
+    void remove_resource(int rid, int units){
         /*
-        Removes resouce from process resources
+        Removes resouce, units pair
         */
-        resources.erase(remove(resources.begin(), resources.end(), rid), resources.end());
+        if (has_resource(rid, units)){
+            int new_units = resources[rid] - units;
+            if (new_units == 0){
+                resources.erase(rid);
+            }else{
+                resources[rid] = new_units;
+            }
+        }else{
+            warning("Trying to release too many units.");
+        }
+        
+        
     }
 
     void print(){
         string msg = format("PID: {}, state: {}, parent: {} ", pid, state, parent);
         cout << msg << endl << "Resources: ";
-        for (auto r : resources){
-            cout << r << " ";
+        for (const auto &[key, value] : resources){
+            cout << "\t" << "RID: " << key << " Units: " << value << endl;
         }
         cout << endl;
     }
 };
 
 #endif
+
+
+
+// Resource functions
+
+        // void free(){
+        //     if (state == 1){
+        //         warning("It is already free");
+        //     }
+        //     if (!WL.empty()){
+        //         warning("Waitlist is not empty. Impossible to be free!");
+        //         return;
+        //     }if (state <= 0){
+        //         warning("Nothing in inventory. Impossible to be free!");
+        //         return;
+        //     }
+        //     state = inventory;
+        // }
+
+                // bool release_units(int units){
+        //     int new_count = inventory - units;
+        //     if (new_count >= 0){
+        //         inventory = new_count;
+        //         return true;
+        //     }
+        //     return false; 
+        // }

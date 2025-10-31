@@ -25,6 +25,10 @@ class Resource{
         Resource(int r, int inital_units) : rid(r), state(inital_units), inventory(inital_units){}
 
         bool is_alloc(){
+            /*
+            Checks if it is fully allocated
+            */
+            
             if (state < 0){
                 warning("State got to less than zero.");
             }
@@ -32,10 +36,16 @@ class Resource{
         }
 
         bool is_free(){
+            /*
+            Check if there are any resouces free.
+            */
             return state > 0;
         }
 
         bool is_request_legal(int units){
+            /*
+            Logical Check to see if amount request is feasiable 
+            */
             return state - units >= 0;
         }
 
@@ -45,43 +55,42 @@ class Resource{
             When equalling to zero I have to be able to make them free
             */
 
-            if (is_request_legal(units)){ // if units > available units
+            if (is_request_legal(units)){ 
                 state -= units;
-            }else{
+            }else{ // if units > available units
                 warning("Trying to alloc more than avaialble.");
                 return;
             }
-
-            
         }
 
-
+        bool is_release_legal(int units){
+            /*
+            Checks if it is legal to release unit amount of resources. 
+            */
+            return state + units <= inventory;
+        }
 
         void release(int units){
-            int new_avail_units = state + units;
-            if (new_avail_units > inventory){
+            
+            if (is_release_legal(units)){
+                state -= units;
+            }else{
                 warning("Trying to release too many units. Excceds inventory");
                 return;
             }
-            state = new_avail_units;
+            
         }
 
         vector<int> now_free(){
             /*
-            Returns vector of PIDS that can now be free
+            Returns a vector of PIDS that can now be free in current state of Resource
             */
             vector<int> del_wl_pid;
-
-            for (auto& [key, value] : WL){
-                if (value <= state){
-                    del_wl_pid.push_back(key);
+            for (auto& [pid, units_requested] : WL){
+                if (units_requested <= state){
+                    del_wl_pid.push_back(pid);
                 }
             }
-
-            // for (int pid : del_wl_pid){
-            //     WL.erase(pid);
-            // }
-
             return del_wl_pid;
         }
 
@@ -90,21 +99,24 @@ class Resource{
             PID is now a blocked process which is requesting {units} amount of resource
             */
             if (WL.contains(pid)){
-                string msg = format("{} is already in WL. Cannot be requesting resources if it is blocked. Requesting: {} units", pid, units);
-                warning("Already in WL. Impossible due to blocked processes not being able to request resources");
+                string msg = format("Process {} is already in WL. Cannot be requesting resources if it is a blocked proccess. Requesting: {} units", pid, units);
+                warning(msg);
             }else{
                 WL[pid] = units;
             }
         }
 
         void force_free(){
+            /*
+            Forces the resouce into a free state.
+            */
             state = inventory;
             WL.clear();
         }
 
         void print(){
             string msg = format("RID: {}, state: {}, inventory: {}", rid, state, inventory);
-            cout << msg << endl << "WL: ";
+            cout << msg << endl << "WL: " << endl;
             for (const auto &[key, value] : WL){
                 cout << "\t" << "PID: " << key << " Units: " << value << endl;
             }
@@ -121,22 +133,20 @@ class Process{
     int parent;
     int priority;
 
-    
-    // ChildList children; // LL of process it created (children processes)
     vector<int> children; // Vector of PIDs of children
-
-    map<int, int> resources; // map RID, units
+    map<int, int> resources; // RID, amount units held by Process
 
     // Destructor
     ~Process(){
         state = -1;
         parent = -1;
-        // Children will be deleted using ~ChildList()
+        // Children will be deleted automaticallt using vector
         // resources will be deleted automatically using vector
     }
 
     // Default Constructor
     Process() : state(-1), parent(-1){ }
+
     // Constructor params
     Process(int id, int s, int p, int pr): pid(id), state(s), parent(p), priority(pr){ }   
 
@@ -145,13 +155,13 @@ class Process{
     }
 
     bool has_child(int pid){
+        /*
+        Check if the process had child with given pid
+        */
         auto it = find(children.begin(), children.end(), pid);
         return it != children.end();
     }
 
-    int num_children(){
-        return children.size();
-    }
     void remove_child(int child_pid){
         /*
         Removes the child from the childlist
@@ -162,7 +172,11 @@ class Process{
 
         children.erase(remove(children.begin(), children.end(), child_pid), children.end());
     }
+
     void add_resource(int rid, int units){
+        /*
+        Adds unit amount of RID resource.
+        */
         if (resources.contains(rid)){
             resources[rid] += units;
         }else{
@@ -183,12 +197,21 @@ class Process{
     }
 
     bool has_resource(int rid, int units){
+        /*
+        Checks if Process even has resource. Then checks if process has units 
+        amount of resource.
+
+        IMPORTANT: Used to check in cases like releasing a resource it has but 
+        more than it actuall has of that respurce
+        */
         return resources.contains(rid) && units <= resources[rid];
     }
 
     void remove_resource(int rid, int units){
         /*
-        Removes resouce, units pair
+        Removes units amount of RID resource. In the case that it removes 
+        all units of that resource it will then take it off it its resource
+        list.
         */
         if (has_resource(rid, units)){
             int new_units = resources[rid] - units;
@@ -200,13 +223,11 @@ class Process{
         }else{
             warning("Trying to release too many units.");
         }
-        
-        
     }
 
     void print(){
         string msg = format("PID: {}, state: {}, parent: {} ", pid, state, parent);
-        cout << msg << endl << "Resources: ";
+        cout << msg << endl << "Resources: " << endl;
         for (const auto &[key, value] : resources){
             cout << "\t" << "RID: " << key << " Units: " << value << endl;
         }
@@ -215,30 +236,3 @@ class Process{
 };
 
 #endif
-
-
-
-// Resource functions
-
-        // void free(){
-        //     if (state == 1){
-        //         warning("It is already free");
-        //     }
-        //     if (!WL.empty()){
-        //         warning("Waitlist is not empty. Impossible to be free!");
-        //         return;
-        //     }if (state <= 0){
-        //         warning("Nothing in inventory. Impossible to be free!");
-        //         return;
-        //     }
-        //     state = inventory;
-        // }
-
-                // bool release_units(int units){
-        //     int new_count = inventory - units;
-        //     if (new_count >= 0){
-        //         inventory = new_count;
-        //         return true;
-        //     }
-        //     return false; 
-        // }

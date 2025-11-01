@@ -73,7 +73,7 @@ class Resource{
         void release(int units){
             
             if (is_release_legal(units)){
-                state -= units;
+                state += units;
             }else{
                 warning("Trying to release too many units. Excceds inventory");
                 return;

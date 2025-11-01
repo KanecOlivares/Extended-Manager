@@ -54,21 +54,34 @@ Process* get_running_process(){
     return get_process(curr_running_pid);
 }
 
-void after_exe(){
+void after_bug(){
     ofstream file("output.txt", ios::app);
     if (!file.is_open()) {
         cerr << "Error opening file!" << endl;
         return;
     }
 
-    Process* running_p = get_running_process();
-    if (!running_p) {
-        cerr << "No running process found!" << endl;
+    file << "-1 ";  // appends instead of overwriting
+}
+
+void before_restart(){
+    ofstream file("output.txt", ios::app);
+    if (!file.is_open()) {
+        cerr << "Error opening file!" << endl;
         return;
     }
 
-    int run_pid = running_p->pid;
-    file << run_pid << " ";  // appends instead of overwriting
+    file << endl;  // appends instead of overwriting
+}
+
+void after_exe(){
+    ofstream file("output.txt", ios::app);
+    if (!file.is_open()) {
+        cerr << "Error opening file!" << endl;
+        return;
+    }
+    
+    file << curr_running_pid << " ";  // appends instead of overwriting
 }
 
 void print(string msg){
@@ -85,17 +98,21 @@ Process* get_process(int pid){
     Returns nullptr if not found
     */
 
+    if (PCB.empty()){
+        debug("PCB is empty cannot get any process");
+        return nullptr;
+    }
+
     for (Process& c : PCB){
         if (c.pid == pid){
             return &c;
         }
     }
+
     string msg = format("Did not find process with PID: {}", pid);
     debug(msg);
     return nullptr;
 }
-
-
 
 void add_child_to(int parent_pid, int child_pid){
     Process* parent = get_process(parent_pid);
@@ -357,7 +374,6 @@ void request(int request_rid, int units){
         print(msg);
 
     }else{ // Reousrce is not free or too many resources requested
-        runnning_p = get_process(run_pid);
         runnning_p -> block();
         move_process_to_other(RL[priority], WL, run_pid); // Move from RL to WL the process being moved is running_p
         rr->add_wl_process(run_pid, units);
@@ -380,11 +396,20 @@ int get_highest_priority(vector<int>& v){
     return max_pid;
 }
 
-void rl_free_pids(vector<int>& free_pids){
-    for (int pid : free_pids){
-        Process* p = get_process(pid);
-        int priority = p -> priority;
-        move_process_to_other(WL, RL[priority], pid);
+void rl_free_pids(int rid){
+    Resource* rr = get_resource(rid);
+    for (auto [pid, units] : rr -> WL){
+        if (rr->is_request_legal(units)){
+            Process* p = get_process(pid);
+            int priority = p -> priority;
+            rr -> alloc(units); // no need for PID just allocating
+            p -> add_resource(rid, units); 
+            p -> ready();
+            rr -> WL.erase(pid);
+            move_process_to_other(WL, RL[priority], pid);
+        }else{
+            break;
+        }
     }
 }
 
@@ -404,13 +429,21 @@ void rl_scheduler(vector<int>& free_pids){
 
 void release(int release_rid, int given_pid, int units){
     /*
-    Releases resource w/rid from given_p.
-    units = untis to be released.
+    Arguments:
+        given_pid: The PID of the process that will be releasing resource w/release_rid
+        release_rid: The RID of the resource process w/given_pid will be releasing
+        units: amount of Resource the process is trying to release
+
+    Process w/given_pid is trying to release {units} amount of Resource w/release_rid
     */
+    if (units < 0){
+        debug("Attempting to release less than 0 resources.");
+        return;
+    }
 
     Process* given_p = get_process(given_pid);
 
-    if(!given_p){
+    if(!given_p){ // Checks existance of PID
         debug("Nullptr can not release resource.");
         return;
     }
@@ -429,22 +462,21 @@ void release(int release_rid, int given_pid, int units){
         return;
     }
 
-
-    rr -> release(units);
     given_p->remove_resource(release_rid, units);
-
-    if (! rr -> WL.empty()){
-        vector<int> free_pids = rr -> now_free();
-        rl_free_pids(free_pids); // frees pids of free_pids
-        rl_scheduler(free_pids); // Calls scheduler if needed
+    rr -> release(units);
+    if (! rr -> WL.empty()){ // If WL has at least 1 process
+        rl_free_pids(release_rid); // frees pids of free_pids
     }
-
+    scheduler();
     string msg = format("Resource RID: {}, units: {}, has been released", release_rid, units);
     print(msg);
     
 }
 
 int highest_occupied_priority(){
+    /*
+    Retuerns the highest RL priority that actually has processes in it
+    */
 
     for (int i = RL.size() - 1; i >= 0; --i){
         if (RL[i].empty()){
@@ -454,33 +486,45 @@ int highest_occupied_priority(){
         }
     }
 
+    debug("Highest Occupied Priority returning -1");
     return -1;
 }
 
 void timeout(){
     /*
-    Mimcks time sharing
-
+    Mimcks time sharing. Timesout moves the head of highest priority RL to the tail
     */
-   int high_p = highest_occupied_priority();
-    if (RL[high_p].size() == 1){
-        print("Only 1 process in ready list. Just skip");
-        return;
-    }
-    
     Process* running_p = get_running_process();
-    rotate(RL[high_p].begin(), RL[high_p].begin() + 1, RL[high_p].end());
-    running_p -> ready(); // Now it is the old running process is ready()
-    Process* new_running_p = get_running_process();
-    new_running_p -> running(); // New running_p is now running()
+    int run_priority = running_p -> priority;
+
+
+    if (RL[run_priority].size() == 1){
+        string msg = format("Only 1 process in RL[{}]. Just skip rotate.", run_priority);
+        print(msg);
+    }else{
+        rotate(RL[run_priority].begin(), RL[run_priority].begin() + 1, RL[run_priority].end());
+    }
     scheduler();
 
 }
 
 void scheduler(){
+    /*
+    Function in charge of context switching. Grab the highest priority process.
+    */
     
     curr_running_pid = RL[highest_occupied_priority()][0];
+
+    // for (auto [rid, units] : running_p -> resources){
+    //     if (resources_alloc(curr_running_pid, rid)){ // Checks WL of RID
+    //         continue;
+    //     }else{
+    //         request()
+    //     }
+    // }
+
     cout << "Process PID: " << curr_running_pid << " running." << endl;
+    
 
 }
 
@@ -696,12 +740,20 @@ void clear_file(const string& filename) {
 }
 
 int main() {
+    
+    for(;;){
+        string first_input = prompt();
+        if (first_input == "id"){
+            break;
+        }
+    }
 
     Process p0 = Process(0, 0, -1, 0); // PID 0, ready, no parent
     PCB.push_back(p0);
     RL.resize(1);
     RL[0].push_back(0);
     id();
+    after_exe();
 
     vector<std::string> tokens;
     clear_file("output.txt");
@@ -716,13 +768,14 @@ int main() {
             continue;
         };
 
-        if(take_action(tokens)){
+        if(take_action(tokens) && !detected_bug){
             tokens.clear();
             after_exe();
             continue; // Back to top
         }
 
         if (detected_bug) {
+            after_bug();
             for (;;) { // Wait till in or id command
                 input = prompt();
                 tokens = get_tokens(input);
@@ -734,7 +787,9 @@ int main() {
             // Now handle that command:
             if (take_action(tokens)) {
                 tokens.clear();
+                detected_bug = false;
                 after_exe();
+                
             }
         }
     }

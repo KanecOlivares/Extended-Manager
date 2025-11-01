@@ -1,0 +1,20 @@
+How to run:
+
+    Compilation: 
+        1. Please be in the working directory. i.e ../project1_Kanec_Olivares. Do not move around STAY HERE
+        2. Next run in the terminal
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+            cmake --build build
+            
+    
+    Running:
+        1. ./build/main <filename_of_input> 
+            1a. Must be txt!!!
+            1b. If no file name is specified I will take input.txt as the default
+
+    List of files:
+        process.h: Is a header file that contains my Resource and Process data types.
+        main.cpp: The main file where I keep the PCB, RCB, WL, RL, all necesary functions that
+                in order for the Extended Manager to run.
+        CMakeLists.txt: CMake for easy compilation
+

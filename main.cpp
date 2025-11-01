@@ -858,13 +858,24 @@ string prompt() {
     return line;
 }
 
-int main() {
-    std::ifstream file("input.txt");
+int main(int argc, char* argv[]) {
+
+    string filename;
+
+    if (argc > 1) {
+        filename = argv[1];
+
+    }else{
+        filename = "input.txt";
+    }
+    // cout << "Filename: " << filename << endl;
+    std::ifstream file(filename);
     if (file) {
         set_input_stream(file);  // feed lines from file first
     } else {
         std::cerr << "Warning: input.txt not found; using interactive input.\n";
     }
+    
     print("Doing main");
     do_main();
     return 0;

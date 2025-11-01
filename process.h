@@ -10,6 +10,8 @@ using namespace std;
 
 string NORMAL = "\033[0m";
 string RED = "\033[31m";
+string YELLOW = "\033[33m";
+string BLUE = "\033[34m";
 
 void warning(string msg){
     cout << RED << msg << NORMAL  << " FROM PROCESS.H" << endl;

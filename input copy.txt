@@ -1,0 +1,197 @@
+id
+cr 1
+cr 1
+to
+to
+de 2
+to
+to
+cr 1
+to
+to
+
+id
+cr 1
+de 1
+cr 1
+cr 1
+to
+to
+de 3
+to
+to
+cr 1
+to
+to
+
+id
+cr 1
+cr 2
+cr 2
+cr 1
+to
+cr 1
+cr 1
+cr 2
+to
+to
+to
+de 5
+de 6
+de 7
+to
+to
+to
+
+id
+cr 2
+cr 2
+cr 1
+cr 1
+to
+cr 1
+cr 1
+cr 2
+to
+de 2
+to
+
+id
+cr 2
+cr 2
+cr 1
+to
+cr 1
+cr 1
+cr 2
+rq 1 1
+to
+rq 0 1
+to
+to
+rl 1 1
+to
+rl 0 1
+to
+to
+to
+
+id
+cr 2
+cr 1
+cr 2
+rq 3 1
+to
+rq 1 1
+to
+rq 3 2
+rl 3 3
+to
+rl 1 1
+to
+
+id
+cr 2
+cr 1
+cr 2
+to
+cr 1
+cr 1
+cr 1
+cr 2
+rq 1 1
+to
+rq 1 1
+rq 1 1
+to
+rl 1 1
+to
+rl 1 1
+to
+to
+to
+
+id
+cr 2
+cr 1
+cr 2
+cr 1
+to
+cr 1
+cr 1
+cr 2
+rq 3 3
+to
+rq 2 2
+rq 3 1
+to
+rq 2 1
+rq 2 1
+to
+to
+to
+to
+
+id
+cr 2
+cr 2
+cr 2
+to
+cr 1
+cr 1
+cr 2
+to
+to
+to
+rq 1 1
+to
+to
+rq 1 1
+de 2
+to
+to
+
+id
+cr 2
+cr 2
+cr 2
+to
+rq 3 1
+to
+rq 0 1
+rq 3 3
+to
+rq 0 1
+de 2
+to
+to
+
+id
+cr 2
+cr 2
+cr 1
+to
+cr 1
+cr 1
+cr 2
+rq 3 1
+to
+rq 3 1
+to
+to
+rq 3 1
+to
+
+see
+
+rq 3 2 // BLOCKED 1 
+see
+       // LINE SKIP 13
+to
+
+rl 3 2
+
+to
+to
+q
+

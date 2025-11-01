@@ -31,6 +31,7 @@ Process* get_process(int pid);
 void delete_process(int target_pid);
 void release(int release_rid, int given_pid, int units);
 void scheduler();
+string prompt();
 
 int next_pid = 1;
 int curr_running_pid = 0;
@@ -71,7 +72,7 @@ void before_restart(){
         return;
     }
 
-    file << endl;  // appends instead of overwriting
+    file << "\n";
 }
 
 void after_exe(){
@@ -80,7 +81,7 @@ void after_exe(){
         cerr << "Error opening file!" << endl;
         return;
     }
-    
+
     file << curr_running_pid << " ";  // appends instead of overwriting
 }
 
@@ -142,8 +143,8 @@ void create(int priority){
         debug("Cannot access priority <= 0");
         return;
     }
-    int size = RL.size();
-    if (priority > size){
+    int highest_pl = RL.size() - 1;
+    if (priority > highest_pl){
         debug("That prirotity level doesnt exist.");
         return;
     }
@@ -178,25 +179,23 @@ void create(int priority){
     }
 }
 
-void delete_children(int parent_pid){
-    /*
-    For all children in the parent's child vector delete those aswell
-    */
-
+void delete_children(int parent_pid) {
     Process* parent = get_process(parent_pid);
-
-    if (!parent){
+    if (!parent) {
         debug("Trying to delete children of nullptr");
         return;
     }
 
-    for (int child_pid : parent -> children){
+    // Detach the children list to avoid iterator invalidation
+    std::vector<int> children;
+    children.swap(parent->children);   // parent->children becomes empty
+
+    // Now safe: delete calls can mutate parent->children without affecting this loop
+    for (int child_pid : children) {
         delete_process(child_pid);
     }
-    parent -> children.clear();
-
-    
 }
+
 
 void remove_from_PCB(int target_pid){
     /*
@@ -210,21 +209,14 @@ void remove_from_PCB(int target_pid){
     Solution: Use remove_if and use the pids.
     */
 
-    Process* target = get_process(target_pid);
 
-    if (!target){
-        debug("Attempting to remove nullptr from PCB");
-        return;
-    }
-    if (is_proccess_0(target_pid)){
+    if (is_proccess_0(target_pid)) {
         debug("Attempting to remove Process 0 from PCB");
         return;
     }
-    PCB.erase(remove_if(PCB.begin(), PCB.end(),
-                         [target_pid](const Process& p){ return p.pid == target_pid; }),
-          PCB.end());
-
+    erase_if(PCB, [target_pid](const Process& p){ return p.pid == target_pid; });
 }
+
 
 void remove_from_parent_list(int child_pid){
     /*
@@ -267,9 +259,15 @@ void release_resources(int target_pid){
         debug("Cannot release resources of nullptr");
         return;
     }
-    for (const auto &[rid, units] : target -> resources){
-        release(rid, target_pid, units);
+
+    auto& res = target->resources;
+    for (auto it = res.begin(); it != res.end(); ) {
+        int rid   = it->first;
+        int units = it->second;
+        ++it;                        // move iterator forward first
+        release(rid, target_pid, units); // may erase rid safely now
     }
+
 }
 
 void delete_process(int target_pid){
@@ -312,7 +310,6 @@ void destroy(int target_pid){
         debug("Nullptr cannot destroy any processes");
         return;
     }
-    int run_pid = running_p -> pid;
 
     if (is_proccess_0(target_pid)){
         debug("Process 0 cannot be destroyed during runtime");
@@ -320,16 +317,21 @@ void destroy(int target_pid){
     }
     if (running_p -> has_child(target_pid) || target_pid == running_p -> pid){
         delete_process(target_pid);
+        if (target_pid == curr_running_pid){
+            scheduler();
+        }
     }else{
-        string msg = format("Running process {} can not destroy {} because it is not owner.", run_pid, target_pid);
+        string msg = format("Running process {} can not destroy {} because it is not owner.", curr_running_pid, target_pid);
         debug(msg);
         return;
     }
+
+
 }
 
 Resource* get_resource(int target_rid){
-    int size = static_cast<int>(RCB.size());
-    if (target_rid > size){
+    int highest_rid = static_cast<int>(RCB.size())-1;
+    if (target_rid > highest_rid){
         debug("Trying to get resource that does not exist.");
         return nullptr;
     }
@@ -396,22 +398,39 @@ int get_highest_priority(vector<int>& v){
     return max_pid;
 }
 
-void rl_free_pids(int rid){
+void rl_free_pids(int rid) {
     Resource* rr = get_resource(rid);
-    for (auto [pid, units] : rr -> WL){
-        if (rr->is_request_legal(units)){
-            Process* p = get_process(pid);
-            int priority = p -> priority;
-            rr -> alloc(units); // no need for PID just allocating
-            p -> add_resource(rid, units); 
-            p -> ready();
-            rr -> WL.erase(pid);
-            move_process_to_other(WL, RL[priority], pid);
-        }else{
-            break;
+    if (!rr) {
+        debug("RL_FREE_PIDS of nullptr impossible");
+        return;
+    }
+
+    for (auto it = rr->WL.begin(); it != rr->WL.end(); ++it) {
+        int pid   = it->first;
+        int units = it->second;
+
+        if (!rr->is_request_legal(units)) {
+            continue;
         }
+
+        Process* p = get_process(pid);
+
+        if (!p) { 
+            return;
+        }
+
+        int priority = p->priority;
+
+        rr->alloc(units);            
+        p->add_resource(rid, units);
+        p->ready();
+
+        // move PID from waiting list to ready queue
+        // (assuming WL is your global vector<int> and RL[priority] is vector<int>)
+        move_process_to_other(WL, RL[priority], pid);
     }
 }
+
 
 void rl_scheduler(vector<int>& free_pids){
 
@@ -436,6 +455,7 @@ void release(int release_rid, int given_pid, int units){
 
     Process w/given_pid is trying to release {units} amount of Resource w/release_rid
     */
+    
     if (units < 0){
         debug("Attempting to release less than 0 resources.");
         return;
@@ -494,6 +514,7 @@ void timeout(){
     /*
     Mimcks time sharing. Timesout moves the head of highest priority RL to the tail
     */
+    
     Process* running_p = get_running_process();
     int run_priority = running_p -> priority;
 
@@ -514,26 +535,10 @@ void scheduler(){
     */
     
     curr_running_pid = RL[highest_occupied_priority()][0];
-
-    // for (auto [rid, units] : running_p -> resources){
-    //     if (resources_alloc(curr_running_pid, rid)){ // Checks WL of RID
-    //         continue;
-    //     }else{
-    //         request()
-    //     }
-    // }
-
     cout << "Process PID: " << curr_running_pid << " running." << endl;
     
 
 }
-
-
-// void force_free_all(){
-//     for (auto &r : RCB){
-//         r.force_free();
-//     }
-// }
 
 void pcb_clear_but_0(){
     /*
@@ -543,12 +548,6 @@ void pcb_clear_but_0(){
         PCB.erase(PCB.begin() + 1, PCB.end());
     }
 }
-
-// void rcb_default(){
-//     for (Resource& r : RCB){
-//         r.force_free();
-//     }
-// }
 
 void rl_clear_but_0(){
     /*
@@ -578,24 +577,25 @@ void make_resources(int num_resources){
 void init(int levels, int num_resources){
     /*
     Returns the state of the program to the given levels and number of resources
+    3 levels 4 resources 
+    0 1 2
+    0 1 2 3 4
     */
+    detected_bug = false;
     pcb_clear_but_0();
+    RCB.clear();
+
     rl_clear_but_0();
+    WL.clear();
 
     RL.resize(levels);
     PCB[0].running();
+    next_pid = 1;
+    curr_running_pid = 0;
     
-    WL.clear();
-    RCB.clear();
     make_resources(num_resources);
+    
 
-}
-
-string prompt() {
-    cout << ">> ";
-    string input;
-    std::getline(std::cin, input);
-    return input;
 }
 
 vector<string> get_tokens(const std::string& input){
@@ -637,11 +637,13 @@ void see_values(){
 
     // Ready List
     cout << GREEN << "RL: " << NORMAL;
-    for (size_t i = 0; i < RL.size(); ++i){
-        cout << "\t" << "Priority " << i << ": ";
-        for(auto r : RL[i]){
-            cout << r << " ";
+
+    for(size_t priority_level = 0; priority_level < RL.size(); ++priority_level){
+        cout << "\tPriority: " << priority_level << endl << "\t\t";
+        for (int pid: RL[priority_level]){
+            cout << pid << " ";
         }
+        cout << endl;
     }
     cout << endl;
 
@@ -680,6 +682,7 @@ void ru(vector<string> tokens){
 void id(){
     /*
     Return the state of the program to the default state
+
     */
     init(3,4);
     vector<string> tokens = {"1", "1", "2", "3"};
@@ -709,23 +712,27 @@ bool take_action(vector<string>& tokens){
     }else if(command == "rl"){
         int rid = stoi(tokens[1]);
         int units = stoi(tokens[2]);
-        Process* p = get_running_process();
-        int run_pid = p -> pid;
-        release(rid, run_pid, units);
+        release(rid, curr_running_pid, units);
         return true;
     }else if(command == "to"){
         timeout();
         return true;
     }else if(command == "in"){
+        before_restart();
         int levels = stoi(tokens[1]);
         int num_r = stoi(tokens[2]);
         init(levels, num_r);
         return true;
     }else if(command == "see"){
         see_values();
-        return true;
+        return false;
     }else if(command == "id"){
+        before_restart();
         id();
+        return true;
+    }else if(command == "ru"){
+        tokens.erase(tokens.begin());
+        ru(tokens);
         return true;
     }
     print("Not a valid command");
@@ -739,58 +746,126 @@ void clear_file(const string& filename) {
     }
 }
 
-int main() {
-    
-    for(;;){
-        string first_input = prompt();
-        if (first_input == "id"){
-            break;
-        }
-    }
+int line_skips = 1;
 
-    Process p0 = Process(0, 0, -1, 0); // PID 0, ready, no parent
+void print_line_skip(){
+    cout << YELLOW << "LINE SKIP: " << line_skips++ << NORMAL << endl; 
+}
+
+void do_main() {
+    clear_file("output.txt");
+    vector<string> tokens;
+
+    // --- First loop: wait for "id"
+    for (;;) {
+        string first_input = prompt();
+        if (first_input == "q") return;
+        if (first_input.empty()) {
+            print_line_skip();
+            continue;
+        }
+        tokens = get_tokens(first_input);
+        if (tokens.empty()) continue;
+        if (tokens[0] == "id") break;
+    }
+    print("Out of first loop");
+
+    // --- Bootstrap
+    Process p0 = Process(0, 0, -1, 0);
     PCB.push_back(p0);
     RL.resize(1);
     RL[0].push_back(0);
     id();
     after_exe();
 
-    vector<std::string> tokens;
-    clear_file("output.txt");
-    
+    // --- Main REPL
     for (;;) {
         string input = prompt();
         if (input == "q") break;
 
-        tokens = get_tokens(input);
-        if (tokens.empty()){
-            debug("No tokens detected");
-            continue;
-        };
-
-        if(take_action(tokens) && !detected_bug){
+        if (input.empty()) {
+            print_line_skip();
             tokens.clear();
-            after_exe();
-            continue; // Back to top
+            continue;
         }
+
+        tokens = get_tokens(input);
+        if (tokens.empty()) {
+            tokens.clear();
+            continue;
+        }
+
+        if (take_action(tokens) && !detected_bug) {
+            after_exe();
+            tokens.clear();
+            continue;
+        }
+        tokens.clear();
 
         if (detected_bug) {
             after_bug();
-            for (;;) { // Wait till in or id command
+
+            // Wait until an "in" or "id" command
+            for (;;) {
                 input = prompt();
+                if (input == "q") return;          // allow exit here too
+                if (input.empty()) { print_line_skip(); continue; }
+
                 tokens = get_tokens(input);
                 if (!tokens.empty() && (tokens[0] == "in" || tokens[0] == "id")) {
-                    break; // got a valid starter token
+                    break;
                 }
             }
 
-            // Now handle that command:
             if (take_action(tokens)) {
                 tokens.clear();
                 detected_bug = false;
                 after_exe();
-                
             }
         }
     }
+}
+
+
+static std::istream* g_in = &std::cin;
+
+void set_input_stream(std::istream& is) {
+    g_in = &is;
+}
+
+static inline void trim_inplace(std::string& s) {
+    size_t i = 0, j = s.size();
+    while (i < j && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+    while (j > i && std::isspace(static_cast<unsigned char>(s[j - 1]))) --j;
+    s.assign(s.begin() + i, s.begin() + j);
+}
+
+static int g_line_number = 0;
+string prompt() {
+    std::string line;
+
+    if (g_in == &std::cin) std::cout << ">> " << std::flush;
+
+    if (!std::getline(*g_in, line)) return "q";
+
+    // Remove a trailing '\r' from Windows CRLF files (getline only strips '\n')
+    if (!line.empty() && line.back() == '\r') line.pop_back();
+
+    // Also trim outer whitespace so "id  " or "to " still match
+    trim_inplace(line);
+    ++g_line_number;
+    cout << BLUE <<"[LINE " << g_line_number << "] " << line  << NORMAL << endl;
+    return line;
+}
+
+int main() {
+    std::ifstream file("input.txt");
+    if (file) {
+        set_input_stream(file);  // feed lines from file first
+    } else {
+        std::cerr << "Warning: input.txt not found; using interactive input.\n";
+    }
+    print("Doing main");
+    do_main();
+    return 0;
 }

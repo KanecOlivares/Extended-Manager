@@ -875,7 +875,7 @@ int main(int argc, char* argv[]) {
     } else {
         std::cerr << "Warning: input.txt not found; using interactive input.\n";
     }
-    
+
     print("Doing main");
     do_main();
     return 0;
